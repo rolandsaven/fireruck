@@ -1,18 +1,19 @@
-// FiretruckPuzzleApp.jsx  🚒🧩✨  (responsive board + scaled pieces)
+// FiretruckPuzzleApp.jsx  🚒🧩✨  (responsive board + scaled pieces + on‑screen tray)
 // ------------------------------------------------------------------
-//  ▸ Board scales to fit viewport (BASE_SIZE → boardPx).
-//  ▸ **Piece PNGs now scale proportionally** with the board so they
-//    always match the silhouette. All translate/scale transforms factor
-//    in the current board → base scale.
+//  ▸ Board scales (BASE_SIZE → boardPx) as before.
+//  ▸ Pieces now start in a **visible tray bar at the bottom of the board**
+//    instead of coordinates below the silhouette, so nothing is hidden
+//    off‑screen on short mobile viewports.
 // ------------------------------------------------------------------
 //  No external deps. Tailwind 4.1 via @tailwindcss/vite.
 // ------------------------------------------------------------------
 
 import { useState, useEffect, useRef } from "react";
 
-const BASE_SIZE = 1024;          // puzzle designed in this coord space
-const MAX_BOARD_PX = 600;        // max board size on large screens
-const SNAP_RADIUS = 40;          // snap tolerance in base units
+const BASE_SIZE = 1024;       // design coordinate system
+const MAX_BOARD_PX = 600;     // cap board on very large screens
+const SNAP_RADIUS = 40;       // in base units
+const TRAY_HEIGHT = 160;      // base‑units strip reserved for tray
 const CONFETTI_COLORS = ["#ff595e", "#ffca3a", "#8ac926", "#1982c4", "#6a4c93"];
 
 export default function FiretruckPuzzleApp() {
@@ -20,10 +21,11 @@ export default function FiretruckPuzzleApp() {
   const calcBoardPx = () => {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    return Math.min(vw - 32, vh - 192, MAX_BOARD_PX);
+    // Reserve ~220 px for header + margin so tray stays on‑screen
+    return Math.min(vw - 32, vh - 220, MAX_BOARD_PX);
   };
   const [boardPx, setBoardPx] = useState(calcBoardPx);
-  const scale = boardPx / BASE_SIZE; // <–– key: global scale factor
+  const scale = boardPx / BASE_SIZE; // global scale factor
 
   useEffect(() => {
     const onResize = () => setBoardPx(calcBoardPx());
@@ -34,10 +36,10 @@ export default function FiretruckPuzzleApp() {
   /* -------------------- state refs -------------------------- */
   const [pieces, setPieces] = useState([]);
   const [completed, setCompleted] = useState(false);
-  const dragRef = useRef(null);               // { id, offX, offY, el, lastX, lastY }
+  const dragRef = useRef(null);
   const boardRef = useRef(null);
 
-  /* -------------------- confetti code ----------------------- */
+  /* -------------------- confetti ---------------------------- */
   useEffect(() => {
     if (document.getElementById("cf-keyframes")) return;
     const style = document.createElement("style");
@@ -61,9 +63,10 @@ export default function FiretruckPuzzleApp() {
   };
 
   /* -------------------- load manifest ----------------------- */
-  const randTray = () => ({
-    x: Math.random() * (BASE_SIZE - 150) + 25,
-    y: BASE_SIZE + 40 + Math.random() * 60,
+  // Pieces spawn in a horizontal tray strip occupying the last TRAY_HEIGHT units of the base board.
+  const randTrayPos = () => ({
+    x: Math.random() * (BASE_SIZE - 160) + 80,          // keep away from edges
+    y: BASE_SIZE - TRAY_HEIGHT / 2 + (Math.random() * TRAY_HEIGHT) / 4, // roughly mid‑tray
   });
 
   useEffect(() => {
@@ -75,7 +78,7 @@ export default function FiretruckPuzzleApp() {
             id: p.file.replace(/\.png$/i, ""),
             src: `/assets/pieces/${p.file}`,
             target: p.target,
-            position: randTray(),
+            position: randTrayPos(),
             placed: false,
           }))
         )
@@ -90,14 +93,13 @@ export default function FiretruckPuzzleApp() {
     }
   }, [pieces, scale]);
 
-  /* -------------------- pointer utils ----------------------- */
+  /* -------------------- pointer helpers --------------------- */
   const toLocal = (e) => {
     const rect = boardRef.current.getBoundingClientRect();
     return { x: (e.clientX - rect.left) / scale, y: (e.clientY - rect.top) / scale };
   };
 
-  const transformStr = (x, y, extraScale = 1) =>
-    `translate(${x * scale}px, ${y * scale}px) scale(${scale * extraScale})`;
+  const tx = (x, y, s = 1) => `translate(${x * scale}px, ${y * scale}px) scale(${scale * s})`;
 
   /* -------------------- pointer handlers -------------------- */
   const onDown = (id) => (e) => {
@@ -105,12 +107,12 @@ export default function FiretruckPuzzleApp() {
     const idx = pieces.findIndex((p) => p.id === id);
     if (idx === -1 || pieces[idx].placed) return;
     const pt = toLocal(e);
-    const offsetX = pt.x - pieces[idx].position.x;
-    const offsetY = pt.y - pieces[idx].position.y;
+    const offX = pt.x - pieces[idx].position.x;
+    const offY = pt.y - pieces[idx].position.y;
     const el = e.currentTarget;
     el.style.zIndex = 60;
     el.style.filter = "drop-shadow(0 6px 10px rgba(0,0,0,.35))";
-    dragRef.current = { id, offX: offsetX, offY: offsetY, el };
+    dragRef.current = { id, offX, offY, el };
     el.setPointerCapture(e.pointerId);
   };
 
@@ -120,7 +122,7 @@ export default function FiretruckPuzzleApp() {
     const pt = toLocal(e);
     const x = pt.x - offX;
     const y = pt.y - offY;
-    el.style.transform = transformStr(x, y, 1.1);
+    el.style.transform = tx(x, y, 1.1);
     dragRef.current.lastX = x;
     dragRef.current.lastY = y;
     e.preventDefault();
@@ -137,20 +139,18 @@ export default function FiretruckPuzzleApp() {
         const y = lastY ?? p.position.y;
         const dist = Math.hypot(p.target.x - x, p.target.y - y);
         if (dist < SNAP_RADIUS) {
-          // snap
           el.style.transition = "transform 120ms ease-out";
-          el.style.transform = transformStr(p.target.x, p.target.y, 1.2);
+          el.style.transform = tx(p.target.x, p.target.y, 1.2);
           confetti(p.target.x, p.target.y);
           setTimeout(() => {
-            el.style.transform = transformStr(p.target.x, p.target.y, 1);
+            el.style.transform = tx(p.target.x, p.target.y, 1);
             el.style.filter = "none";
             el.style.zIndex = 0;
           }, 120);
           return { ...p, placed: true, position: p.target };
         }
-        // not snapped
         el.style.transition = "transform 120ms ease-out";
-        el.style.transform = transformStr(x, y, 1);
+        el.style.transform = tx(x, y, 1);
         el.style.filter = "none";
         el.style.zIndex = 10;
         return { ...p, position: { x, y } };
@@ -158,8 +158,8 @@ export default function FiretruckPuzzleApp() {
     );
   };
 
-  /* -------------------- shared img props -------------------- */
-  const imgProps = {
+  /* -------------------- img props --------------------------- */
+  const imgP = {
     draggable: false,
     onDragStart: (e) => e.preventDefault(),
     className:
@@ -195,9 +195,9 @@ export default function FiretruckPuzzleApp() {
             key={piece.id}
             src={piece.src}
             alt={piece.id}
-            style={{ transform: transformStr(piece.position.x, piece.position.y) }}
+            style={{ transform: tx(piece.position.x, piece.position.y) }}
             onPointerDown={onDown(piece.id)}
-            {...imgProps}
+            {...imgP}
           />
         ))}
       </div>
