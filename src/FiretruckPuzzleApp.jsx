@@ -1,10 +1,10 @@
-// FiretruckPuzzleApp.jsx  🚒🧩✨  (responsive board + scaled pieces + on‑screen tray)
+// FiretruckPuzzleApp.jsx  🚒🧩✨  (responsive board + pieces spawn ON the board)
 // ------------------------------------------------------------------
-//  ▸ Board scales (BASE_SIZE → boardPx) as before.
-//  ▸ Pieces now start in a **visible tray bar at the bottom of the board**
-//    instead of coordinates below the silhouette, so nothing is hidden
-//    off‑screen on short mobile viewports.
+//  ✦ The tray is gone — every piece now spawns at a random position
+//    **over** the board itself (inside a safe 100-px margin) so they’re
+//    always visible on any screen without scrolling.
 // ------------------------------------------------------------------
+//  Board and pieces still scale together; confetti & snap effects intact.
 //  No external deps. Tailwind 4.1 via @tailwindcss/vite.
 // ------------------------------------------------------------------
 
@@ -12,8 +12,7 @@ import { useState, useEffect, useRef } from "react";
 
 const BASE_SIZE = 1024;       // design coordinate system
 const MAX_BOARD_PX = 600;     // cap board on very large screens
-const SNAP_RADIUS = 40;       // in base units
-const TRAY_HEIGHT = 160;      // base‑units strip reserved for tray
+const SNAP_RADIUS = 40;       // snap tolerance in base units
 const CONFETTI_COLORS = ["#ff595e", "#ffca3a", "#8ac926", "#1982c4", "#6a4c93"];
 
 export default function FiretruckPuzzleApp() {
@@ -21,12 +20,11 @@ export default function FiretruckPuzzleApp() {
   const calcBoardPx = () => {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    // Reserve ~220 px for header + margin so tray stays on‑screen
-    return Math.min(vw - 32, vh - 220, MAX_BOARD_PX);
+    // keep header visible (≈ 180 px) on small screens
+    return Math.min(vw - 32, vh - 180, MAX_BOARD_PX);
   };
   const [boardPx, setBoardPx] = useState(calcBoardPx);
-  const scale = boardPx / BASE_SIZE; // global scale factor
-
+  const scale = boardPx / BASE_SIZE;
   useEffect(() => {
     const onResize = () => setBoardPx(calcBoardPx());
     window.addEventListener("resize", onResize);
@@ -52,22 +50,24 @@ export default function FiretruckPuzzleApp() {
     if (!boardRef.current) return;
     const N = big ? 50 : 14;
     for (let i = 0; i < N; i++) {
-      const s = (big ? Math.random() * 10 + 6 : Math.random() * 6 + 4) * scale;
+      const sz = (big ? Math.random() * 10 + 6 : Math.random() * 6 + 4) * scale;
       const dx = (Math.random() - 0.5) * (big ? 600 : 240) * scale;
       const dy = (-Math.random() * (big ? 600 : 300) - 200) * scale;
       const sp = document.createElement("span");
-      sp.style.cssText = `position:absolute;left:0;top:0;pointer-events:none;width:${s}px;height:${s}px;background:${CONFETTI_COLORS[i % CONFETTI_COLORS.length]};--sx:${xBase*scale}px;--sy:${yBase*scale}px;--dx:${dx}px;--dy:${dy}px;animation:cf ${big?1200:900}ms cubic-bezier(.25,.1,.25,1) forwards`;
+      sp.style.cssText = `position:absolute;left:0;top:0;pointer-events:none;width:${sz}px;height:${sz}px;background:${CONFETTI_COLORS[i % CONFETTI_COLORS.length]};--sx:${xBase*scale}px;--sy:${yBase*scale}px;--dx:${dx}px;--dy:${dy}px;animation:cf ${big?1200:900}ms cubic-bezier(.25,.1,.25,1) forwards`;
       boardRef.current.appendChild(sp);
       setTimeout(() => sp.remove(), big ? 1300 : 1000);
     }
   };
 
   /* -------------------- load manifest ----------------------- */
-  // Pieces spawn in a horizontal tray strip occupying the last TRAY_HEIGHT units of the base board.
-  const randTrayPos = () => ({
-    x: Math.random() * (BASE_SIZE - 160) + 80,          // keep away from edges
-    y: BASE_SIZE - TRAY_HEIGHT / 2 + (Math.random() * TRAY_HEIGHT) / 4, // roughly mid‑tray
-  });
+  const randomOnBoard = () => {
+    const margin = 100; // keep away from extreme edges (base units)
+    return {
+      x: Math.random() * (BASE_SIZE - 2 * margin) + margin,
+      y: Math.random() * (BASE_SIZE - 2 * margin) + margin,
+    };
+  };
 
   useEffect(() => {
     fetch("/assets/firetruck_manifest.json")
@@ -78,7 +78,7 @@ export default function FiretruckPuzzleApp() {
             id: p.file.replace(/\.png$/i, ""),
             src: `/assets/pieces/${p.file}`,
             target: p.target,
-            position: randTrayPos(),
+            position: randomOnBoard(),
             placed: false,
           }))
         )
@@ -93,12 +93,11 @@ export default function FiretruckPuzzleApp() {
     }
   }, [pieces, scale]);
 
-  /* -------------------- pointer helpers --------------------- */
+  /* -------------------- pointer math ------------------------ */
   const toLocal = (e) => {
     const rect = boardRef.current.getBoundingClientRect();
     return { x: (e.clientX - rect.left) / scale, y: (e.clientY - rect.top) / scale };
   };
-
   const tx = (x, y, s = 1) => `translate(${x * scale}px, ${y * scale}px) scale(${scale * s})`;
 
   /* -------------------- pointer handlers -------------------- */
@@ -115,7 +114,6 @@ export default function FiretruckPuzzleApp() {
     dragRef.current = { id, offX, offY, el };
     el.setPointerCapture(e.pointerId);
   };
-
   const onMove = (e) => {
     if (!dragRef.current) return;
     const { offX, offY, el } = dragRef.current;
@@ -127,7 +125,6 @@ export default function FiretruckPuzzleApp() {
     dragRef.current.lastY = y;
     e.preventDefault();
   };
-
   const onUp = () => {
     if (!dragRef.current) return;
     const { id, el, lastX, lastY } = dragRef.current;
@@ -158,7 +155,7 @@ export default function FiretruckPuzzleApp() {
     );
   };
 
-  /* -------------------- img props --------------------------- */
+  /* -------------------- shared img props -------------------- */
   const imgP = {
     draggable: false,
     onDragStart: (e) => e.preventDefault(),
@@ -183,13 +180,11 @@ export default function FiretruckPuzzleApp() {
         onPointerMove={onMove}
         onPointerUp={onUp}
       >
-        {/* silhouette */}
         <img
           src="/assets/firetruck_silhouette.png"
           alt="fire-engine silhouette"
           className="absolute inset-0 w-full h-full pointer-events-none opacity-80"
         />
-        {/* pieces */}
         {pieces.map((piece) => (
           <img
             key={piece.id}
